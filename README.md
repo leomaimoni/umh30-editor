@@ -1,54 +1,27 @@
-# UMH-30 Editor
+# UMH-30 Editor v0.2-alpha
 
-Editor Android experimental para o DOREMiDi UMH-30.
+Versão de diagnóstico das portas MIDI Android.
 
-## Objetivo da primeira alpha
+Objetivo: descobrir individualmente quais portas INPUT e OUTPUT do UMH-30 podem ser abertas pelo Android.
 
-A primeira versão valida a infraestrutura antes de implementar todo o protocolo:
+O app:
+- detecta o UMH-30;
+- abre o dispositivo sem abrir portas automaticamente;
+- mostra as 3 INPUT e 3 OUTPUT;
+- testa cada INPUT individualmente;
+- testa cada OUTPUT individualmente;
+- registra sucesso/erro;
+- permite enviar apenas o comando SAVE/SET já confirmado nas capturas.
 
-- detectar o UMH-30 via USB-MIDI;
-- abrir as portas MIDI;
-- receber dados MIDI/SysEx;
-- enviar SysEx;
-- mostrar o tráfego em hexadecimal;
-- enviar o comando SET/SAVE que foi confirmado na captura USBPcap.
+Ainda não implementa routing, USB Host names, Filter ou Mapping.
 
-## O que ainda NÃO está implementado
+## Teste
 
-- leitura da matriz de routing;
-- escrita individual de uma rota;
-- nomes dos USB Host;
-- MIDI Filter;
-- MIDI Mapping.
-
-Essas partes serão adicionadas somente depois de confirmarmos os bytes exatos do protocolo nas capturas.
-
-## Build
-
-O GitHub Actions compila automaticamente o APK de debug a cada push em `main`/`master`, e também pode ser executado manualmente.
-
-## Estrutura
-
-`MidiUsbHelper.kt`
-- transporte Android MIDI.
-
-`Umh30Protocol.kt`
-- comandos SysEx específicos do UMH-30.
-
-`MainActivity.kt`
-- interface.
-
-`.github/workflows/build.yml`
-- build automático do APK.
-
-## Próximo teste
-
-1. Conectar o UMH-30 ao Android.
-2. Abrir o app.
-3. Verificar se o dispositivo aparece.
-4. Connect.
-5. Observar Inputs/Outputs.
-6. Pressionar SEND SAVE / SET somente quando o aparelho estiver conectado.
-7. Enviar o log RX/TX para a próxima etapa.
-
-A versão não altera routing automaticamente.
+Depois de instalar:
+1. conecte o UMH-30;
+2. abra o app;
+3. pressione OPEN DEVICE;
+4. teste INPUT 0, 1 e 2;
+5. teste OUTPUT 0, 1 e 2;
+6. não pressione SAVE ainda;
+7. copie/mande o DIAGNOSTIC LOG.

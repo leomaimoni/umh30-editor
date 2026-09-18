@@ -4,27 +4,11 @@ import android.media.midi.MidiDeviceInfo
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.HorizontalDivider
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Text
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.Composable
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -34,243 +18,212 @@ class MainActivity : ComponentActivity() {
     private lateinit var midi: MidiUsbHelper
 
     private var devices by mutableStateOf<List<MidiDeviceInfo>>(emptyList())
-    private var connectedName by mutableStateOf<String?>(null)
-    private var status by mutableStateOf("Conecte o UMH-30 ao celular.")
-    private var log by mutableStateOf<List<String>>(emptyList())
+    private var selectedId by mutableStateOf<Int?>(null)
+    private var connected by mutableStateOf(false)
+    private var status by mutableStateOf("Conecte o UMH-30.")
+    private var logs by mutableStateOf(listOf<String>())
+    private val inputState = mutableStateMapOf<Int, String>()
+    private val outputState = mutableStateMapOf<Int, String>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-
         midi = MidiUsbHelper(this)
         refresh()
-
-        setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    AppScreen()
-                }
-            }
-        }
+        setContent { MaterialTheme { Screen() } }
     }
 
     override fun onResume() {
         super.onResume()
-        refresh()
+        if (::midi.isInitialized) refresh()
     }
 
     override fun onDestroy() {
-        midi.close()
+        if (::midi.isInitialized) midi.close()
         super.onDestroy()
     }
 
     private fun refresh() {
         devices = midi.listUsbMidiDevices()
-        if (devices.isEmpty()) {
-            status = "Nenhum dispositivo USB-MIDI encontrado."
-        } else {
-            status = "${devices.size} dispositivo(s) USB-MIDI encontrado(s)."
-        }
+        if (devices.isEmpty()) status = "Nenhum USB-MIDI encontrado."
     }
 
-    private fun deviceName(info: MidiDeviceInfo): String {
-        return info.properties.getString(MidiDeviceInfo.PROPERTY_NAME)
+    private fun name(info: MidiDeviceInfo): String =
+        info.properties.getString(MidiDeviceInfo.PROPERTY_NAME)
             ?: info.properties.getString(MidiDeviceInfo.PROPERTY_PRODUCT)
-            ?: "MIDI device ${info.id}"
-    }
+            ?: "MIDI ${info.id}"
 
     private fun connect(info: MidiDeviceInfo) {
-        status = "Conectando..."
-        midi.connect(
-            info = info,
+        midi.connectDevice(info,
             onConnected = {
-                connectedName = deviceName(info)
-                status = "Conectado a ${deviceName(info)}."
-                addLog("CONNECTED")
-                addLog("Inputs: ${info.inputPortCount}, Outputs: ${info.outputPortCount}")
-                info.ports.forEach { port ->
-                    addLog(
-                        "Port ${port.portNumber}: " +
-                            if (port.type == MidiDeviceInfo.PortInfo.TYPE_INPUT) "INPUT" else "OUTPUT"
-                    )
+                selectedId = info.id
+                connected = true
+                status = "Dispositivo aberto. Agora teste as portas individualmente."
+                addLog("DEVICE OPEN: ${name(info)}  ID=${info.id}")
+                addLog("INPUT ports: ${info.inputPortCount}")
+                addLog("OUTPUT ports: ${info.outputPortCount}")
+                info.ports.forEach {
+                    val type = if (it.type == MidiDeviceInfo.PortInfo.TYPE_INPUT) "INPUT" else "OUTPUT"
+                    addLog("PORT ${it.portNumber}: $type")
                 }
             },
+            onError = {
+                connected = false
+                status = it
+                addLog("ERROR: $it")
+            }
+        )
+    }
+
+    private fun openInput(port: Int) {
+        status = "Abrindo INPUT $port..."
+        midi.openInputPort(port,
+            onSuccess = {
+                inputState[port] = "OPEN"
+                status = "INPUT $port aberta."
+                addLog("OPEN INPUT $port: SUCCESS")
+            },
+            onError = {
+                inputState[port] = "ERROR"
+                status = it
+                addLog("OPEN INPUT $port: $it")
+            }
+        )
+    }
+
+    private fun listenOutput(port: Int) {
+        status = "Abrindo OUTPUT $port..."
+        midi.openOutputPort(port,
             onReceive = { bytes ->
                 runOnUiThread {
-                    addLog("RX  ${Umh30Protocol.toHex(bytes)}")
+                    addLog("RX OUTPUT $port: ${Umh30Protocol.hex(bytes)}")
                 }
             },
-            onError = { error ->
-                runOnUiThread {
-                    connectedName = null
-                    status = error
-                    addLog("ERROR  $error")
-                }
+            onSuccess = {
+                outputState[port] = "OPEN"
+                status = "OUTPUT $port aberta para escuta."
+                addLog("OPEN OUTPUT $port: SUCCESS")
+            },
+            onError = {
+                outputState[port] = "ERROR"
+                status = it
+                addLog("OPEN OUTPUT $port: $it")
             }
         )
     }
 
     private fun sendSave() {
-        if (!midi.isConnected) {
-            status = "Conecte o UMH-30 primeiro."
-            return
-        }
-
         val result = midi.send(Umh30Protocol.saveCommand)
-
         result.onSuccess {
-            status = "Comando SAVE enviado."
-            addLog("TX  ${Umh30Protocol.toHex(Umh30Protocol.saveCommand)}")
+            status = "SAVE enviado."
+            addLog("TX: ${Umh30Protocol.hex(Umh30Protocol.saveCommand)}")
         }.onFailure {
-            status = "Erro ao enviar SAVE: ${it.message}"
-            addLog("TX ERROR  ${it.message}")
+            status = "Erro TX: ${it.message}"
+            addLog("TX ERROR: ${it.message}")
         }
     }
 
-    private fun addLog(line: String) {
-        log = (log + line).takeLast(80)
+    private fun addLog(s: String) {
+        logs = (logs + s).takeLast(100)
     }
 
     @Composable
-    private fun AppScreen() {
+    private fun Screen() {
         Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .verticalScroll(rememberScrollState())
-                .padding(16.dp)
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)
         ) {
-            Text(
-                "UMH-30 Editor",
-                style = MaterialTheme.typography.headlineMedium,
-                fontWeight = FontWeight.Bold
-            )
-
-            Text(
-                "v0.1-alpha • transport + protocol capture",
-                style = MaterialTheme.typography.bodySmall
-            )
+            Text("UMH-30 Editor", style = MaterialTheme.typography.headlineMedium,
+                fontWeight = FontWeight.Bold)
+            Text("v0.2-alpha • Port Diagnostic")
 
             Spacer(Modifier.height(12.dp))
+            Text(status)
 
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(12.dp)) {
-                    Text("STATUS", fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(4.dp))
-                    Text(status)
+            Spacer(Modifier.height(12.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                Text("USB MIDI devices", fontWeight = FontWeight.Bold)
+                OutlinedButton(onClick = { refresh() }) { Text("Refresh") }
+            }
 
-                    connectedName?.let {
-                        Spacer(Modifier.height(4.dp))
-                        Text("Connected: $it")
+            devices.forEach { info ->
+                Card(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                    Column(Modifier.padding(12.dp)) {
+                        Text(name(info), fontWeight = FontWeight.Bold)
+                        Text("ID ${info.id} • IN ${info.inputPortCount} • OUT ${info.outputPortCount}")
+                        Spacer(Modifier.height(6.dp))
+                        Button(
+                            onClick = { connect(info) },
+                            modifier = Modifier.fillMaxWidth()
+                        ) { Text("OPEN DEVICE") }
                     }
                 }
             }
 
-            Spacer(Modifier.height(16.dp))
+            if (connected) {
+                Spacer(Modifier.height(16.dp))
+                HorizontalDivider()
+                Spacer(Modifier.height(12.dp))
 
+                Text("INPUT PORTS • app → UMH-30",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold)
+
+                for (p in 0..2) {
+                    PortRow(
+                        label = "INPUT $p",
+                        state = inputState[p],
+                        action = { openInput(p) }
+                    )
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Text("OUTPUT PORTS • UMH-30 → app",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold)
+
+                for (p in 0..2) {
+                    PortRow(
+                        label = "OUTPUT $p",
+                        state = outputState[p],
+                        action = { listenOutput(p) }
+                    )
+                }
+
+                Spacer(Modifier.height(16.dp))
+                Button(
+                    onClick = { sendSave() },
+                    enabled = inputState.values.any { it == "OPEN" },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text("SEND CONFIRMED SAVE / SET")
+                }
+
+                Spacer(Modifier.height(16.dp))
+                Text("DIAGNOSTIC LOG", fontWeight = FontWeight.Bold)
+                Card(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(10.dp)) {
+                        logs.forEach { Text(it, style = MaterialTheme.typography.bodySmall) }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun PortRow(
+        label: String,
+        state: String?,
+        action: () -> Unit
+    ) {
+        Card(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                Modifier.fillMaxWidth().padding(10.dp),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text(
-                    "USB MIDI devices",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-
-                OutlinedButton(onClick = { refresh() }) {
-                    Text("Refresh")
+                Column(Modifier.weight(1f)) {
+                    Text(label, fontWeight = FontWeight.Bold)
+                    Text(state ?: "not tested")
                 }
-            }
-
-            Spacer(Modifier.height(8.dp))
-
-            if (devices.isEmpty()) {
-                Text("Nenhum dispositivo encontrado.")
-            } else {
-                devices.forEach { info ->
-                    Card(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .padding(vertical = 4.dp)
-                    ) {
-                        Column(Modifier.padding(12.dp)) {
-                            Text(
-                                deviceName(info),
-                                fontWeight = FontWeight.Bold
-                            )
-                            Text(
-                                "ID ${info.id} • IN ${info.inputPortCount} • OUT ${info.outputPortCount}"
-                            )
-
-                            Spacer(Modifier.height(8.dp))
-
-                            Button(
-                                onClick = { connect(info) },
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
-                                Text(
-                                    if (connectedName == deviceName(info))
-                                        "Reconnect"
-                                    else
-                                        "Connect"
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(16.dp))
-            HorizontalDivider()
-            Spacer(Modifier.height(16.dp))
-
-            Text(
-                "Confirmed UMH-30 command",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(Modifier.height(4.dp))
-
-            Text("SAVE / SET")
-            Text(
-                Umh30Protocol.toHex(Umh30Protocol.saveCommand),
-                style = MaterialTheme.typography.bodySmall
-            )
-
-            Spacer(Modifier.height(8.dp))
-
-            Button(
-                onClick = { sendSave() },
-                enabled = midi.isConnected,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Text("SEND SAVE / SET")
-            }
-
-            Spacer(Modifier.height(20.dp))
-
-            Text(
-                "MIDI / SysEx log",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-
-            Spacer(Modifier.height(6.dp))
-
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(10.dp)) {
-                    if (log.isEmpty()) {
-                        Text("Nenhum evento ainda.")
-                    } else {
-                        log.forEach { line ->
-                            Text(
-                                line,
-                                style = MaterialTheme.typography.bodySmall,
-                                modifier = Modifier.padding(vertical = 2.dp)
-                            )
-                        }
-                    }
-                }
+                Button(onClick = action) { Text("TEST") }
             }
         }
     }

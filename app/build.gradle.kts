@@ -2,43 +2,25 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
 }
-
 android {
     namespace = "com.leomaimoni.umh30editor"
     compileSdk = 34
-
     defaultConfig {
         applicationId = "com.leomaimoni.umh30editor"
         minSdk = 23
         targetSdk = 34
-        versionCode = 1
-        versionName = "0.1-alpha"
+        versionCode = 2
+        versionName = "0.2-alpha-port-diagnostic"
     }
-
-    buildTypes {
-        release {
-            isMinifyEnabled = false
-        }
-    }
-
+    buildTypes { release { isMinifyEnabled = false } }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-
-    kotlinOptions {
-        jvmTarget = "17"
-    }
-
-    buildFeatures {
-        compose = true
-    }
-
-    composeOptions {
-        kotlinCompilerExtensionVersion = "1.5.14"
-    }
+    kotlinOptions { jvmTarget = "17" }
+    buildFeatures { compose = true }
+    composeOptions { kotlinCompilerExtensionVersion = "1.5.14" }
 }
-
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity-compose:1.9.1")
