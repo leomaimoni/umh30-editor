@@ -5,7 +5,6 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -18,8 +17,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
 private data class RouteNode(
@@ -32,14 +31,15 @@ private data class RouteNode(
 private const val MAX_USB_HOSTS = 8
 
 class MainActivity : ComponentActivity() {
-
     private lateinit var midi: MidiUsbHelper
+
     private var devices by mutableStateOf<List<MidiDeviceInfo>>(emptyList())
     private var connected by mutableStateOf(false)
     private var status by mutableStateOf("Conecte o UMH-30.")
     private var logs by mutableStateOf(listOf<String>())
     private var routes by mutableStateOf(setOf<Pair<String, String>>())
     private var pendingChanges by mutableStateOf(false)
+    private var usbNames by mutableStateOf<Map<Int, String>>(emptyMap())
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -72,9 +72,35 @@ class MainActivity : ComponentActivity() {
     private fun connect(info: MidiDeviceInfo) {
         midi.connectDevice(info, {
             connected = true
-            status = "UMH-30 conectado."
+            status = "UMH-30 conectado. Lendo identificação dos USB Host..."
             addLog("DEVICE OPEN: ${deviceName(info)} ID=${info.id}")
             addLog("ANDROID MIDI: IN=${info.inputPortCount} OUT=${info.outputPortCount}")
+
+            // The UMH-30 appears to Android as one MIDI device with 3 output ports.
+            // Listen on all three because the identification SysEx can be exposed on
+            // the MIDI output stream selected by the firmware.
+            for (port in 0 until info.outputPortCount.coerceAtMost(3)) {
+                midi.openOutputPort(
+                    port,
+                    onReceive = { bytes ->
+                        val parsed = Umh30Protocol.parseUsbHostName(bytes)
+                        runOnUiThread {
+                            addLog("RX OUT ${port + 1}: ${Umh30Protocol.hex(bytes)}")
+                            if (parsed != null) {
+                                usbNames = usbNames + (parsed.slot to parsed.name)
+                                status = "USB ${parsed.slot}: ${parsed.name}"
+                                addLog("USB HOST ${parsed.slot} = ${parsed.name}")
+                            }
+                        }
+                    },
+                    onSuccess = {
+                        addLog("LISTEN OUTPUT ${port + 1}: SUCCESS")
+                    },
+                    onError = {
+                        addLog("LISTEN OUTPUT ${port + 1}: $it")
+                    }
+                )
+            }
         }, {
             connected = false
             status = it
@@ -82,35 +108,36 @@ class MainActivity : ComponentActivity() {
         })
     }
 
-    private fun sources() = buildList {
+    private fun sources(): List<RouteNode> = buildList {
         add(RouteNode("in1", "MIDI IN 1", 0, 1))
         add(RouteNode("in2", "MIDI IN 2", 0, 2))
-        for (i in 1..MAX_USB_HOSTS) add(RouteNode("usb$i", "MIDI USB $i", 1, i))
+        for (i in 1..MAX_USB_HOSTS) {
+            val label = usbNames[i]?.let { "USB $i • $it" } ?: "MIDI USB $i"
+            add(RouteNode("usb$i", label, 1, i))
+        }
     }
 
-    private fun destinations() = buildList {
+    private fun destinations(): List<RouteNode> = buildList {
         add(RouteNode("out1", "MIDI OUT 1", 0, 1))
         add(RouteNode("out2", "MIDI OUT 2", 0, 2))
-        for (i in 1..MAX_USB_HOSTS) add(RouteNode("usbout$i", "MIDI USB $i", 1, i))
+        for (i in 1..MAX_USB_HOSTS) {
+            val label = usbNames[i]?.let { "USB $i • $it" } ?: "MIDI USB $i"
+            add(RouteNode("usbout$i", label, 1, i))
+        }
     }
 
-    private fun isForbidden(source: RouteNode, destination: RouteNode): Boolean {
-        return source.type == destination.type && source.index == destination.index
-    }
+    private fun forbidden(s: RouteNode, d: RouteNode): Boolean =
+        s.type == d.type && s.index == d.index
 
-    private fun toggle(source: RouteNode, destination: RouteNode) {
-        if (isForbidden(source, destination)) {
-            status = "${source.label} não pode ser ligado a ele mesmo."
+    private fun toggle(s: RouteNode, d: RouteNode) {
+        if (forbidden(s, d)) {
+            status = "${s.label} não pode ser ligado a ele mesmo."
             return
         }
-        val key = source.id to destination.id
+        val key = s.id to d.id
         routes = if (key in routes) routes - key else routes + key
         pendingChanges = true
-        status = if (key in routes) {
-            "${source.label} → ${destination.label}"
-        } else {
-            "Ligação removida."
-        }
+        status = if (key in routes) "${s.label} → ${d.label}" else "Ligação removida."
     }
 
     private fun clearAll() {
@@ -129,12 +156,14 @@ class MainActivity : ComponentActivity() {
             return
         }
 
-        val allS = sources()
-        val allD = destinations()
+        val src = sources()
+        val dst = destinations()
 
-        for ((sid, did) in routes) {
-            val s = allS.first { it.id == sid }
-            val d = allD.first { it.id == did }
+        routes.forEach { (sid, did) ->
+            val s = src.firstOrNull { it.id == sid } ?: return@forEach
+            val d = dst.firstOrNull { it.id == did } ?: return@forEach
+            if (forbidden(s, d)) return@forEach
+
             val msg = Umh30Protocol.routingCommand(
                 s.type, s.index, d.type, d.index, true
             )
@@ -156,7 +185,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun addLog(s: String) {
-        logs = (logs + s).takeLast(120)
+        logs = (logs + s).takeLast(160)
     }
 
     @Composable
@@ -172,20 +201,18 @@ class MainActivity : ComponentActivity() {
                 Column {
                     Text("UMH-30 Editor", style = MaterialTheme.typography.headlineMedium,
                         fontWeight = FontWeight.Bold)
-                    Text("v0.4-alpha • Routing", fontSize = 11.sp)
+                    Text("v0.5-alpha • USB Host names + Routing", fontSize = 10.sp)
                 }
                 Text(
                     if (connected) "● CONNECTED" else "○ DISCONNECTED",
-                    fontSize = 11.sp,
-                    fontWeight = FontWeight.Bold
+                    fontSize = 10.sp, fontWeight = FontWeight.Bold
                 )
             }
 
-            Spacer(Modifier.height(6.dp))
-            Text(status, fontSize = 11.sp)
+            Spacer(Modifier.height(5.dp))
+            Text(status, fontSize = 10.sp)
 
             if (!connected) {
-                Spacer(Modifier.height(8.dp))
                 devices.forEach { info ->
                     Card(Modifier.fillMaxWidth().padding(vertical = 3.dp)) {
                         Row(
@@ -194,8 +221,10 @@ class MainActivity : ComponentActivity() {
                         ) {
                             Column(Modifier.weight(1f)) {
                                 Text(deviceName(info), fontWeight = FontWeight.Bold)
-                                Text("ID ${info.id} • IN ${info.inputPortCount} • OUT ${info.outputPortCount}",
-                                    fontSize = 10.sp)
+                                Text(
+                                    "ID ${info.id} • IN ${info.inputPortCount} • OUT ${info.outputPortCount}",
+                                    fontSize = 10.sp
+                                )
                             }
                             Button(onClick = { connect(info) }) { Text("CONNECT") }
                         }
@@ -204,10 +233,12 @@ class MainActivity : ComponentActivity() {
             }
 
             if (connected) {
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(6.dp))
+                UsbHostSummary()
+                Spacer(Modifier.height(6.dp))
                 RoutingPanel()
 
-                Spacer(Modifier.height(8.dp))
+                Spacer(Modifier.height(7.dp))
                 Row(
                     Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -224,11 +255,30 @@ class MainActivity : ComponentActivity() {
                     ) { Text("ENVIAR AO UMH-30") }
                 }
 
-                Spacer(Modifier.height(10.dp))
-                Text("LOG", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Spacer(Modifier.height(8.dp))
+                Text("LOG", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                 Card(Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(7.dp)) {
-                        logs.forEach { Text(it, fontSize = 9.sp) }
+                    Column(Modifier.padding(6.dp)) {
+                        logs.forEach { Text(it, fontSize = 8.sp) }
+                    }
+                }
+            }
+        }
+    }
+
+    @Composable
+    private fun UsbHostSummary() {
+        Card(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(8.dp)) {
+                Text("USB HOST", fontWeight = FontWeight.Bold, fontSize = 11.sp)
+                if (usbNames.isEmpty()) {
+                    Text(
+                        "Aguardando mensagens de identificação do UMH-30...",
+                        fontSize = 9.sp
+                    )
+                } else {
+                    usbNames.toSortedMap().forEach { (slot, name) ->
+                        Text("USB $slot  •  $name", fontSize = 9.sp)
                     }
                 }
             }
@@ -241,15 +291,11 @@ class MainActivity : ComponentActivity() {
         val destList = destinations()
         var selectedSource by remember { mutableStateOf<RouteNode?>(null) }
 
-        // Each node is one row. Canvas spans the central area and draws all active
-        // connections from the source column to the destination column.
         BoxWithConstraints(
-            Modifier
-                .fillMaxWidth()
-                .height(500.dp)
+            Modifier.fillMaxWidth().height(500.dp)
         ) {
-            val leftWidth = 105.dp
-            val rightWidth = 105.dp
+            val leftWidth = 108.dp
+            val rightWidth = 108.dp
             val centerStart = leftWidth
             val centerEnd = maxWidth - rightWidth
 
@@ -264,6 +310,7 @@ class MainActivity : ComponentActivity() {
                     val di = destList.indexOfFirst { it.id == did }
                     if (si >= 0 && di >= 0) {
                         drawLine(
+                            color = androidx.compose.ui.graphics.Color(0xFF1565C0),
                             start = Offset(x1, top + si * rowHeight),
                             end = Offset(x2, top + di * rowHeight),
                             strokeWidth = 3.dp.toPx(),
@@ -277,7 +324,7 @@ class MainActivity : ComponentActivity() {
                 Modifier.width(leftWidth).align(Alignment.TopStart),
                 verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
-                Text("MIDI IN", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Text("MIDI IN / USB", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                 sourceList.forEach { source ->
                     Node(
                         source.label,
@@ -294,7 +341,7 @@ class MainActivity : ComponentActivity() {
                 Modifier.width(rightWidth).align(Alignment.TopEnd),
                 verticalArrangement = Arrangement.spacedBy(3.dp)
             ) {
-                Text("MIDI OUT", fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                Text("MIDI OUT / USB", fontWeight = FontWeight.Bold, fontSize = 11.sp)
                 destList.forEach { dest ->
                     Node(
                         dest.label,
@@ -303,9 +350,7 @@ class MainActivity : ComponentActivity() {
                     ) {
                         val source = selectedSource
                         if (source == null) {
-                            status = "Primeiro selecione um MIDI IN/USB."
-                        } else if (isForbidden(source, dest)) {
-                            status = "${source.label} não pode ser ligado a ele mesmo."
+                            status = "Primeiro selecione uma entrada."
                         } else {
                             toggle(source, dest)
                             selectedSource = null
@@ -316,7 +361,7 @@ class MainActivity : ComponentActivity() {
         }
 
         Text(
-            "Toque em uma entrada e depois na saída. A linha representa a ligação.",
+            "Toque em uma entrada e depois na saída. A linha mostra a ligação.",
             fontSize = 9.sp
         )
     }
@@ -347,7 +392,7 @@ class MainActivity : ComponentActivity() {
                 Modifier.fillMaxSize().padding(horizontal = 5.dp),
                 contentAlignment = Alignment.CenterStart
             ) {
-                Text(label, fontSize = 8.sp, maxLines = 1)
+                Text(label, fontSize = 7.sp, maxLines = 1)
             }
         }
     }
