@@ -76,9 +76,21 @@ class MainActivity : ComponentActivity() {
             addLog("DEVICE OPEN: ${deviceName(info)} ID=${info.id}")
             addLog("ANDROID MIDI: IN=${info.inputPortCount} OUT=${info.outputPortCount}")
 
-            // The UMH-30 appears to Android as one MIDI device with 3 output ports.
-            // Listen on all three because the identification SysEx can be exposed on
-            // the MIDI output stream selected by the firmware.
+            // Android exposes the UMH-30 as one MIDI device. Open BOTH directions:
+            // InputPort = app -> UMH-30, OutputPort = UMH-30 -> app.
+            for (port in 0 until info.inputPortCount.coerceAtMost(3)) {
+                midi.openInputPort(
+                    port,
+                    onSuccess = {
+                        addLog("OPEN INPUT ${port + 1}: SUCCESS")
+                    },
+                    onError = {
+                        addLog("OPEN INPUT ${port + 1}: $it")
+                    }
+                )
+            }
+
+            // Listen on all three outputs for USB-host identification SysEx.
             for (port in 0 until info.outputPortCount.coerceAtMost(3)) {
                 midi.openOutputPort(
                     port,
@@ -235,6 +247,15 @@ class MainActivity : ComponentActivity() {
             if (connected) {
                 Spacer(Modifier.height(6.dp))
                 UsbHostSummary()
+                Spacer(Modifier.height(5.dp))
+                OutlinedButton(
+                    onClick = {
+                        usbNames = emptyMap()
+                        status = "Aguardando nova identificação dos USB Host..."
+                        addLog("USB HOST NAME CACHE CLEARED")
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("LIMPAR NOMES USB / AGUARDAR NOVA LEITURA") }
                 Spacer(Modifier.height(6.dp))
                 RoutingPanel()
 

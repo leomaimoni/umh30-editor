@@ -1,39 +1,33 @@
-# UMH-30 Editor v0.5-alpha
+# UMH-30 Editor v0.6-alpha
 
-Editor visual de routing com tentativa de identificação dos dispositivos USB Host.
+## Alteração principal
 
-## Identificação USB Host
+Ao conectar o UMH-30, o aplicativo abre automaticamente:
 
-O app escuta as 3 portas OUTPUT MIDI expostas pelo UMH-30 ao Android.
+- INPUT 1..3: app -> UMH-30
+- OUTPUT 1..3: UMH-30 -> app
 
-Quando recebe o padrão:
+Isso corrige o erro `nenhuma input port está aberta` observado ao enviar routing.
+
+As três OUTPUT continuam sendo monitoradas para mensagens de identificação dos USB Host.
+
+## USB Host names
+
+O parser reconhece:
 
 F0 00 21 5E 02 06 01 SLOT LENGTH ASCII... F7
 
-ele decodifica o nome e atualiza a interface.
+Exemplos confirmados:
+- USB 1 = W-FADER
+- USB 2 = SINCO
+- USB 3 = FM-1
 
-Exemplos confirmados nas capturas:
-
-USB 1 = W-FADER
-USB 2 = SINCO
-USB 3 = FM-1
+A v0.6 não inventa um comando de consulta para os nomes. Ela apenas escuta as mensagens reais do UMH-30. O request usado pelo MIDI Stream para provocar essas respostas será integrado depois de identificado a partir da captura.
 
 ## Routing
 
-Esquerda:
-- MIDI IN 1
-- MIDI IN 2
-- MIDI USB 1..8
+A interface continua com MIDI IN 1/2 + USB Host 1..8 à esquerda e MIDI OUT 1/2 + USB Host 1..8 à direita.
 
-Direita:
-- MIDI OUT 1
-- MIDI OUT 2
-- MIDI USB 1..8
+As conexões da mesma porta são bloqueadas.
 
-A mesma porta não pode ser conectada a ela própria.
-
-ENVIAR AO UMH-30 envia as mensagens de routing e depois o SET/SAVE.
-
-## Nota
-
-A identificação é feita a partir das mensagens que o UMH-30 efetivamente entrega pelo MIDI. Se o firmware só emitir essas mensagens em determinada ação, o app mostrará os nomes assim que recebê-las.
+`ENVIAR AO UMH-30` envia as rotas selecionadas e depois o SET/SAVE.
