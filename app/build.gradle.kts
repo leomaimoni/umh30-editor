@@ -9,8 +9,8 @@ android {
         applicationId = "com.leomaimoni.umh30editor"
         minSdk = 23
         targetSdk = 34
-        versionCode = 6
-        versionName = "0.6-alpha-midi-ports"
+        versionCode = 7
+        versionName = "0.7-alpha-read-config"
     }
     buildTypes { release { isMinifyEnabled = false } }
     compileOptions {

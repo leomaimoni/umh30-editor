@@ -41,6 +41,43 @@ class MainActivity : ComponentActivity() {
     private var pendingChanges by mutableStateOf(false)
     private var usbNames by mutableStateOf<Map<Int, String>>(emptyMap())
 
+    // Commands observed in the DOREMiDi editor capture when it initializes/reads
+    // the UMH-30. The routing read request is followed by the device response/ACK.
+    private val routingReadRequest = byteArrayOf(
+        0xF0.toByte(), 0x00, 0x21, 0x5E, 0x02, 0x01,
+        0x00, 0x00, 0x00, 0x00, 0x7F, 0xF7.toByte()
+    )
+    private val usbHostReadRequest = byteArrayOf(
+        0xF0.toByte(), 0x00, 0x21, 0x5E, 0x01, 0x03,
+        0x00, 0x00, 0x00, 0x00, 0x7F, 0xF7.toByte()
+    )
+
+    private fun parseRoutingState(data: ByteArray): Pair<RouteNode, RouteNode>? {
+        val b = data.map { it.toInt() and 0xFF }
+        if (b.size != 12 || b[0] != 0xF0 || b[1] != 0x00 || b[2] != 0x21 ||
+            b[3] != 0x5E || b[4] != 0x02 || b[5] != 0x01 || b[11] != 0xF7) return null
+        val state = b[10]
+        if (state != 1) return null
+        val sType = b[6]; val sIndex = b[7]
+        val dType = b[8]; val dIndex = b[9]
+        val sId = if (sType == 0) "in$sIndex" else "usb$sIndex"
+        val dId = if (dType == 0) "out$dIndex" else "usbout$dIndex"
+        val sLabel = if (sType == 0) "MIDI IN $sIndex" else usbNames[sIndex]?.let { "USB $sIndex • $it" } ?: "MIDI USB $sIndex"
+        val dLabel = if (dType == 0) "MIDI OUT $dIndex" else usbNames[dIndex]?.let { "USB $dIndex • $it" } ?: "MIDI USB $dIndex"
+        return RouteNode(sId, sLabel, sType, sIndex) to RouteNode(dId, dLabel, dType, dIndex)
+    }
+
+    private fun readDeviceConfiguration() {
+        if (!connected) return
+        usbNames = emptyMap()
+        routes = emptySet()
+        addLog("READ CONFIG: ${Umh30Protocol.hex(routingReadRequest)}")
+        midi.send(routingReadRequest).onFailure { addLog("READ ROUTING ERROR: ${it.message}") }
+        addLog("READ USB HOST: ${Umh30Protocol.hex(usbHostReadRequest)}")
+        midi.send(usbHostReadRequest).onFailure { addLog("READ USB HOST ERROR: ${it.message}") }
+        status = "Lendo configuração do UMH-30..."
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         midi = MidiUsbHelper(this)
@@ -95,13 +132,21 @@ class MainActivity : ComponentActivity() {
                 midi.openOutputPort(
                     port,
                     onReceive = { bytes ->
-                        val parsed = Umh30Protocol.parseUsbHostName(bytes)
+                        val parsedName = Umh30Protocol.parseUsbHostName(bytes)
+                        val parsedRoute = parseRoutingState(bytes)
                         runOnUiThread {
                             addLog("RX OUT ${port + 1}: ${Umh30Protocol.hex(bytes)}")
-                            if (parsed != null) {
-                                usbNames = usbNames + (parsed.slot to parsed.name)
-                                status = "USB ${parsed.slot}: ${parsed.name}"
-                                addLog("USB HOST ${parsed.slot} = ${parsed.name}")
+                            if (parsedName != null) {
+                                usbNames = usbNames + (parsedName.slot to parsedName.name)
+                                status = "USB ${parsedName.slot}: ${parsedName.name}"
+                                addLog("USB HOST ${parsedName.slot} = ${parsedName.name}")
+                            }
+                            if (parsedRoute != null) {
+                                val (source, dest) = parsedRoute
+                                if (source.type == dest.type && source.index == dest.index) return@runOnUiThread
+                                routes = routes + (source.id to dest.id)
+                                addLog("ROUTE READ: ${source.label} -> ${dest.label}")
+                                status = "Configuração lida do UMH-30."
                             }
                         }
                     },
@@ -113,6 +158,10 @@ class MainActivity : ComponentActivity() {
                     }
                 )
             }
+
+            // Give Android a moment to finish opening all MIDI ports, then read the
+            // configuration using the same request observed in the PC capture.
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({ readDeviceConfiguration() }, 250)
         }, {
             connected = false
             status = it
@@ -249,14 +298,10 @@ class MainActivity : ComponentActivity() {
                 UsbHostSummary()
                 Spacer(Modifier.height(5.dp))
                 OutlinedButton(
-                    onClick = {
-                        usbNames = emptyMap()
-                        status = "Aguardando nova identificação dos USB Host..."
-                        addLog("USB HOST NAME CACHE CLEARED")
-                    },
+                    onClick = { readDeviceConfiguration() },
                     modifier = Modifier.fillMaxWidth()
-                ) { Text("LIMPAR NOMES USB / AGUARDAR NOVA LEITURA") }
-                Spacer(Modifier.height(6.dp))
+                ) { Text("LER CONFIGURAÇÃO DO UMH-30") }
+                Spacer(Modifier.height(5.dp))
                 RoutingPanel()
 
                 Spacer(Modifier.height(7.dp))

@@ -11,22 +11,16 @@ import android.os.Handler
 import android.os.Looper
 
 class MidiUsbHelper(context: Context) {
-    private val manager =
-        context.getSystemService(Context.MIDI_SERVICE) as MidiManager
+    private val manager = context.getSystemService(Context.MIDI_SERVICE) as MidiManager
     private val handler = Handler(Looper.getMainLooper())
-
     private var device: MidiDevice? = null
-    private var openedInput: MidiInputPort? = null
-    private var openedOutput: MidiOutputPort? = null
+    private val inputs = mutableMapOf<Int, MidiInputPort>()
+    private val outputs = mutableMapOf<Int, MidiOutputPort>()
 
     fun listUsbMidiDevices(): List<MidiDeviceInfo> =
         manager.devices.filter { it.type == MidiDeviceInfo.TYPE_USB }
 
-    fun connectDevice(
-        info: MidiDeviceInfo,
-        onConnected: () -> Unit,
-        onError: (String) -> Unit
-    ) {
+    fun connectDevice(info: MidiDeviceInfo, onConnected: () -> Unit, onError: (String) -> Unit) {
         close()
         manager.openDevice(info, { opened ->
             if (opened == null) {
@@ -38,23 +32,13 @@ class MidiUsbHelper(context: Context) {
         }, handler)
     }
 
-    fun openInputPort(
-        portNumber: Int,
-        onSuccess: () -> Unit,
-        onError: (String) -> Unit
-    ) {
-        val d = device ?: run {
-            onError("Conecte o UMH-30 primeiro.")
-            return
-        }
+    fun openInputPort(portNumber: Int, onSuccess: () -> Unit, onError: (String) -> Unit) {
+        val d = device ?: run { onError("Conecte o UMH-30 primeiro."); return }
         try {
-            openedInput?.close()
-            openedInput = d.openInputPort(portNumber)
-            if (openedInput == null) {
-                onError("openInputPort($portNumber) retornou null.")
-            } else {
-                onSuccess()
-            }
+            inputs[portNumber]?.close()
+            val p = d.openInputPort(portNumber)
+            if (p == null) onError("openInputPort($portNumber) retornou null.")
+            else { inputs[portNumber] = p; onSuccess() }
         } catch (e: Exception) {
             onError("openInputPort($portNumber): ${e.javaClass.simpleName}: ${e.message}")
         }
@@ -66,25 +50,14 @@ class MidiUsbHelper(context: Context) {
         onSuccess: () -> Unit,
         onError: (String) -> Unit
     ) {
-        val d = device ?: run {
-            onError("Conecte o UMH-30 primeiro.")
-            return
-        }
+        val d = device ?: run { onError("Conecte o UMH-30 primeiro."); return }
         try {
-            openedOutput?.close()
+            outputs[portNumber]?.close()
             val out = d.openOutputPort(portNumber)
-            if (out == null) {
-                onError("openOutputPort($portNumber) retornou null.")
-                return
-            }
-            openedOutput = out
+            if (out == null) { onError("openOutputPort($portNumber) retornou null."); return }
+            outputs[portNumber] = out
             out.connect(object : MidiReceiver() {
-                override fun onSend(
-                    data: ByteArray,
-                    offset: Int,
-                    count: Int,
-                    timestamp: Long
-                ) {
+                override fun onSend(data: ByteArray, offset: Int, count: Int, timestamp: Long) {
                     onReceive(data.copyOfRange(offset, offset + count))
                 }
             })
@@ -95,22 +68,15 @@ class MidiUsbHelper(context: Context) {
     }
 
     fun send(bytes: ByteArray): Result<Unit> {
-        val port = openedInput
+        val port = inputs[0] ?: inputs.values.firstOrNull()
             ?: return Result.failure(IllegalStateException("Nenhuma INPUT port está aberta."))
-        return try {
-            port.send(bytes, 0, bytes.size)
-            Result.success(Unit)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+        return try { port.send(bytes, 0, bytes.size); Result.success(Unit) } catch (e: Exception) { Result.failure(e) }
     }
 
     fun close() {
-        try { openedOutput?.close() } catch (_: Exception) {}
-        try { openedInput?.close() } catch (_: Exception) {}
+        inputs.values.forEach { try { it.close() } catch (_: Exception) {} }
+        outputs.values.forEach { try { it.close() } catch (_: Exception) {} }
         try { device?.close() } catch (_: Exception) {}
-        openedOutput = null
-        openedInput = null
-        device = null
+        inputs.clear(); outputs.clear(); device = null
     }
 }
