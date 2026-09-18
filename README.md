@@ -1,27 +1,40 @@
-# UMH-30 Editor v0.2-alpha
+# UMH-30 Editor v0.4-alpha
 
-Versão de diagnóstico das portas MIDI Android.
+Primeira versão do editor visual de routing.
 
-Objetivo: descobrir individualmente quais portas INPUT e OUTPUT do UMH-30 podem ser abertas pelo Android.
+## Interface
 
-O app:
-- detecta o UMH-30;
-- abre o dispositivo sem abrir portas automaticamente;
-- mostra as 3 INPUT e 3 OUTPUT;
-- testa cada INPUT individualmente;
-- testa cada OUTPUT individualmente;
-- registra sucesso/erro;
-- permite enviar apenas o comando SAVE/SET já confirmado nas capturas.
+Duas colunas:
+- esquerda: MIDI IN 1, MIDI IN 2 e MIDI USB 1..8;
+- direita: MIDI OUT 1, MIDI OUT 2 e MIDI USB 1..8.
 
-Ainda não implementa routing, USB Host names, Filter ou Mapping.
+Toque em uma entrada e depois em uma saída. Uma linha representa a ligação.
 
-## Teste
+A própria interface bloqueia:
+- MIDI IN 1 -> MIDI OUT 1;
+- MIDI IN 2 -> MIDI OUT 2;
+- MIDI USB N -> MIDI USB N.
 
-Depois de instalar:
-1. conecte o UMH-30;
-2. abra o app;
-3. pressione OPEN DEVICE;
-4. teste INPUT 0, 1 e 2;
-5. teste OUTPUT 0, 1 e 2;
-6. não pressione SAVE ainda;
-7. copie/mande o DIAGNOSTIC LOG.
+## Envio
+
+Ao pressionar ENVIAR AO UMH-30:
+1. envia um SysEx de routing para cada ligação;
+2. envia o SET/SAVE confirmado;
+3. registra os bytes em hexadecimal no log.
+
+## Protocolo
+
+A codificação de routing usada nesta versão é a que foi recuperada durante a investigação do UMH-30:
+F0 00 21 5E 02 01 SRC_TYPE SRC_INDEX DST_TYPE DST_INDEX STATE F7
+
+00 = MIDI físico
+01 = USB Host
+01 = connect
+00 = disconnect
+
+SET/SAVE:
+F0 00 21 5E 02 02 00 F7
+
+## Observação
+
+Esta versão fixa 8 slots USB Host, que é o limite informado para o hub do UMH-30. Os nomes reais dos dispositivos USB ainda dependem da forma como o UMH-30 expõe esses dispositivos ao Android.

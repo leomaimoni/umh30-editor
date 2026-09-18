@@ -9,8 +9,8 @@ android {
         applicationId = "com.leomaimoni.umh30editor"
         minSdk = 23
         targetSdk = 34
-        versionCode = 2
-        versionName = "0.2-alpha-port-diagnostic"
+        versionCode = 4
+        versionName = "0.4-alpha-routing-editor"
     }
     buildTypes { release { isMinifyEnabled = false } }
     compileOptions {
